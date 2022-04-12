@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential, load_model
 from keras.layers import LSTM, Dense, Dropout
-from matplotlib.pyplot import figure
 from datetime import datetime
 
 
@@ -13,7 +12,6 @@ class My_LSTM_Training:
     DATA_PATH = ''
     MODEL_PATH = ''
     PIC_PATH = ''
-    scaler = ''
     now_predict_file = ''
     now_model_name = ''
 
@@ -22,7 +20,6 @@ class My_LSTM_Training:
         self.DATA_PATH = data_path
         self.MODEL_PATH = model_path
         self.PIC_PATH = pic_path
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
 
     def create_dataset(self, data, timestep):
         # 用于辅助初始化数据的方法
@@ -38,20 +35,33 @@ class My_LSTM_Training:
         origin_dataset_train = pd.read_csv(self.DATA_PATH + data_file)
         training_set = origin_dataset_train['Open'].values
         training_set = np.array(training_set.reshape(-1, 1))
+        # 读取数据集文件，取出Open(开盘单股价格)列作为模型训练的数据。
 
-        training_set_scaled = self.scaler.fit_transform(training_set)
-        X_train, y_train = self.create_dataset(training_set_scaled, self.Timestep)  # 获取初始化数据
-        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-        # 把X_train从2维数据reshape成三维数据[stock prices, timesteps, indicators]
-        return X_train, y_train
+        dataset_train = np.array(training_set[:int(training_set.shape[0] * 0.6)])
+        dataset_test = np.array(training_set[int(training_set.shape[0] * 0.6):])
+        # 将原始数据划分为训练集和测试集
+
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        dataset_train_scaled = scaler.fit_transform(dataset_train)
+        dataset_test_scaled = scaler.transform(dataset_test)
+        # 把数据给适应到一个范围里
+
+        x_train, y_train = self.create_dataset(dataset_train_scaled, self.Timestep)
+        x_test, y_test = self.create_dataset(dataset_test_scaled, self.Timestep)
+        # 将数据通过create_dataset() 变成多个数据集合
+
+        x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+        x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+        # 把x_train和x_test从二维数据reshape成三维数据
+        return x_train, y_train, x_test, y_test
 
     def modelTrain(self, X_train, y_train, epochs=32, batch_size=32, name='stock_prediction.h5'):
         model_train = Sequential()
-        model_train.add(LSTM(units=64, activation='relu', return_sequences=True, input_shape=(X_train.shape[1], 1)))
+        model_train.add(LSTM(units=80, activation='relu', return_sequences=True, input_shape=(X_train.shape[1], 1)))
         model_train.add(Dropout(0.12))
-        model_train.add(LSTM(units=64, activation='relu', return_sequences=True))
+        model_train.add(LSTM(units=80, activation='relu', return_sequences=True))
         model_train.add(Dropout(0.12))
-        model_train.add(LSTM(units=64, activation='relu'))
+        model_train.add(LSTM(units=80, activation='relu'))
         model_train.add(Dropout(0.12))
         # 全连接，输出， add output layer
         model_train.add(Dense(units=1))
@@ -76,14 +86,16 @@ class My_LSTM_Training:
         dataset_test_part = dataset_test[len(dataset_test) - predict_days - timestep:len(dataset_test)]
 
         dataset_test_part = np.array(dataset_test_part.reshape(-1, 1))
-        dataset_test_part = self.scaler.fit_transform(dataset_test_part)
+
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        dataset_test_part = scaler.fit_transform(dataset_test_part)
         X_test = []
         for i in range(self.Timestep, dataset_test_part.shape[0]):
             X_test.append(dataset_test_part[i - self.Timestep + 1:i + 1, 0])
         X_test = np.array(X_test)
         X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
         predicted_price = model.predict(X_test)
-        predicted_price = self.scaler.inverse_transform(predicted_price)
+        predicted_price = scaler.inverse_transform(predicted_price)
         return real_stock_price_part, predicted_price
 
     def visualising(self, real_price, predict_price, if_generate_pic=False):

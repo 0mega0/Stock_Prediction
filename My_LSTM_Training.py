@@ -14,6 +14,7 @@ class My_LSTM_Training:
     PIC_PATH = ''
     now_predict_file = ''
     now_model_name = ''
+    scaler = MinMaxScaler(feature_range=(0, 1))
 
     def __init__(self, timestep, data_path, model_path, pic_path):
         self.Timestep = timestep
@@ -23,28 +24,39 @@ class My_LSTM_Training:
 
     def create_dataset(self, data, timestep):
         # 用于辅助初始化数据的方法
-        X_train = []  # 预测点前*Timestep* 的资料
-        y_train = []  # 预测点
+        x = []  # 预测点前*Timestep* 的资料
+        y = []  # 预测点
         for i in range(timestep, data.shape[0]):
-            X_train.append(data[i - timestep:i, 0])
-            y_train.append(data[i, 0])
-        X_train, y_train = np.array(X_train), np.array(y_train)  # 转换成numpy array格式，方便输入到模型
-        return X_train, y_train
+            x.append(data[i - timestep:i, 0])
+            y.append(data[i, 0])
+        x, y = np.array(x), np.array(y)
+        # 转换成numpy array格式，方便输入到模型
+
+        '''
+        输出的x为: 一个数组,数组内容为(data长度 - timestep)个数组,数组的长度为timestep
+        用于后续预测. 通过前timestep个数,预测后一个数的内容
+        输出的y为: 一个数组,数组内容为(data长度 - timestep)个数
+        实则为原data数据的划分data[:-timestep],即data去掉前timestep个元素后,剩下的部分
+        '''
+        return x, y
 
     def init_dataset(self, data_file):
         origin_dataset_train = pd.read_csv(self.DATA_PATH + data_file)
+        # 从CSV文件中读取数据
         training_set = origin_dataset_train['Open'].values
-        training_set = np.array(training_set.reshape(-1, 1))
-        # 读取数据集文件，取出Open(开盘单股价格)列作为模型训练的数据。
+        # 从数据集文件中，取出Open(开盘单股价格)列作为模型训练的数据。
 
+        training_set = np.array(training_set.reshape(-1, 1))
+        # 将数据转换成numpy array格式，方便输入到模型
+        
         dataset_train = np.array(training_set[:int(training_set.shape[0] * 0.6)])
         dataset_test = np.array(training_set[int(training_set.shape[0] * 0.6):])
         # 将原始数据划分为训练集和测试集
 
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        dataset_train_scaled = scaler.fit_transform(dataset_train)
-        dataset_test_scaled = scaler.transform(dataset_test)
-        # 把数据给适应到一个范围里
+        dataset_train_scaled = self.scaler.fit_transform(dataset_train)
+        # 将训练集数据进行标准化处理
+        dataset_test_scaled = self.scaler.transform(dataset_test)
+        # 对测试集数据也进行标准化处理，这里的均值、方差、最大值最小值等等，等同于训练集的均值、方差、最大值最小值
 
         x_train, y_train = self.create_dataset(dataset_train_scaled, self.Timestep)
         x_test, y_test = self.create_dataset(dataset_test_scaled, self.Timestep)
@@ -53,6 +65,7 @@ class My_LSTM_Training:
         x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
         x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
         # 把x_train和x_test从二维数据reshape成三维数据
+
         return x_train, y_train, x_test, y_test
 
     def modelTrain(self, X_train, y_train, epochs=32, batch_size=32, name='stock_prediction.h5'):
@@ -96,7 +109,12 @@ class My_LSTM_Training:
         X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
         predicted_price = model.predict(X_test)
         predicted_price = scaler.inverse_transform(predicted_price)
+        # 还原为原始数据
         return real_stock_price_part, predicted_price
+
+    def model_predict_from_list(self, model_name, data_predict, timestep, predict_days):
+        if predict_days == '':
+            predict_days = len(data_predict) - timestep
 
     def visualising(self, real_price, predict_price, if_generate_pic=False):
         # 可视化预测结果
@@ -120,12 +138,12 @@ class My_LSTM_Training:
     def analysis(self, real_price_set, predict_price_set):
         accuracy = 0.0
 
-# Timestep = 64
-# DATA_PATH = 'dataset_origin/'
-# MODEL_PATH = 'trained_models/'
-# PIC_PATH = 'predict_pic/'
-# myModel = My_LSTM_Training(Timestep, DATA_PATH, MODEL_PATH, PIC_PATH)
-# X_train, y_train = myModel.init_dataset('train_set.csv')
+Timestep = 64
+DATA_PATH = 'dataset_origin/'
+MODEL_PATH = 'trained_models/'
+PIC_PATH = 'predict_pic/'
+myModel = My_LSTM_Training(Timestep, DATA_PATH, MODEL_PATH, PIC_PATH)
+X_train, y_train = myModel.init_dataset('train_set.csv')
 # # myModel.modelTrain(X_train, y_train, batch_size=128, name='train_set_test.h5')
 # # 开始训练模型
 # real_stock_price, predicted_stock_price = myModel.model_predict('train_set_test.h5', 'JD.csv', Timestep, 50)

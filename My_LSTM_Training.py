@@ -5,21 +5,22 @@ from sklearn.preprocessing import MinMaxScaler
 from keras.models import Sequential, load_model
 from keras.layers import LSTM, Dense, Dropout
 from datetime import datetime
-
+import joblib
 
 class My_LSTM_Training:
     Timestep = 64  # 模型通过前*Timestep*天的内容进行预测
     DATA_PATH = ''
     MODEL_PATH = ''
     PIC_PATH = ''
+    SCALER_PATH = ''
     now_predict_file = ''
-    now_model_name = ''
-    scaler = MinMaxScaler(feature_range=(0, 1))
+    now_model_name = '' 
 
-    def __init__(self, timestep, data_path, model_path, pic_path):
+    def __init__(self, timestep, data_path, model_path, scaler_path, pic_path):
         self.Timestep = timestep
         self.DATA_PATH = data_path
         self.MODEL_PATH = model_path
+        self.SCALER_PATH = scaler_path
         self.PIC_PATH = pic_path
 
     def create_dataset(self, data, timestep):
@@ -41,6 +42,8 @@ class My_LSTM_Training:
         return x, y
 
     def init_dataset(self, data_file):
+        data_name = data_file[:-4]
+        # 获取当前csv文件的文件名(去除后缀)
         origin_dataset_train = pd.read_csv(self.DATA_PATH + data_file)
         # 从CSV文件中读取数据
         training_set = origin_dataset_train['Open'].values
@@ -53,10 +56,14 @@ class My_LSTM_Training:
         dataset_test = np.array(training_set[int(training_set.shape[0] * 0.6):])
         # 将原始数据划分为训练集和测试集
 
-        dataset_train_scaled = self.scaler.fit_transform(dataset_train)
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        # 初始化MinMaxScaler，范围为0-1
+        dataset_train_scaled = scaler.fit_transform(dataset_train)
         # 将训练集数据进行标准化处理
-        dataset_test_scaled = self.scaler.transform(dataset_test)
+        dataset_test_scaled = scaler.transform(dataset_test)
         # 对测试集数据也进行标准化处理，这里的均值、方差、最大值最小值等等，等同于训练集的均值、方差、最大值最小值
+        joblib.dump(scaler, self.SCALER_PATH + data_name + '.pkl')
+        # 将scaler保存到硬盘，以备预测时使用，名字与数据集同名
 
         x_train, y_train = self.create_dataset(dataset_train_scaled, self.Timestep)
         x_test, y_test = self.create_dataset(dataset_test_scaled, self.Timestep)
@@ -89,27 +96,54 @@ class My_LSTM_Training:
     def model_predict(self, model_name, data_predict, timestep, predict_days):
         self.now_model_name = model_name
         self.now_predict_file = data_predict[:-4]
+        # 记录当前模型名称和预测文件名(即验证集)
+
         model = load_model(self.MODEL_PATH + model_name)
+        # 读取模型
+
         origin_dataset_test = pd.read_csv(self.DATA_PATH + data_predict)
         real_stock_price = origin_dataset_test['Open'].values
-        # 股市数据的实际数据(全部)
+        # 待预测的股市数据的实际数据(全部)
+
         real_stock_price_part = real_stock_price[len(real_stock_price) - predict_days:len(real_stock_price)]
-        # 股市数据的实际数据(从后往前分割过的)
+        # 待预测股市数据的实际数据(从后往前分割过的，长度为传入参数predict_days决定)
+
         dataset_test = origin_dataset_test['Open'].values
         dataset_test_part = dataset_test[len(dataset_test) - predict_days - timestep:len(dataset_test)]
+        # 准备传入的验证集数据(从后往前分割过的，长度为传入参数predict_days+timestep，用于预测)
 
         dataset_test_part = np.array(dataset_test_part.reshape(-1, 1))
+        # 将分割过的验证集数据转换为np array，用于传入模型
 
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        dataset_test_part = scaler.fit_transform(dataset_test_part)
+        # scaler = MinMaxScaler(feature_range=(0, 1))
+        # dataset_test_part = scaler.fit_transform(dataset_test_part)
+        # X_test = []
+        # for i in range(self.Timestep, dataset_test_part.shape[0]):
+        #     X_test.append(dataset_test_part[i - self.Timestep + 1:i + 1, 0])
+        # X_test = np.array(X_test)
+        # X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+        # predicted_price = model.predict(X_test)
+        # scaler_model = joblib.load('scalers/NASDAQ/AAPL.pkl')
+        # # 暂时用AAPL的scaler进行预测，后面这里要改
+        # predicted_price = scaler_model.inverse_transform(predicted_price)
+        # # 还原为原始数据
+
+        scaler = joblib.load('scalers/NASDAQ/AAPL.pkl')
+        dataset_test_part = scaler.transform(dataset_test_part)
+        # 读取模型训练时保存的scaler，并将验证集数据转换处理
+
         X_test = []
         for i in range(self.Timestep, dataset_test_part.shape[0]):
             X_test.append(dataset_test_part[i - self.Timestep + 1:i + 1, 0])
         X_test = np.array(X_test)
         X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+        # 生成验证集数组
+
         predicted_price = model.predict(X_test)
+        # 使用训练好的模型的predict方法，预测数据
         predicted_price = scaler.inverse_transform(predicted_price)
         # 还原为原始数据
+
         return real_stock_price_part, predicted_price
 
     def model_predict_from_list(self, model_name, data_predict, timestep, predict_days):
@@ -120,30 +154,33 @@ class My_LSTM_Training:
         # 可视化预测结果
         n = len(predict_price)
         length = len(predict_price) if n > 160 else 160
-        plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
-        plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
         plt.rcParams['figure.figsize'] = (length / 20, 6)
-        plt.plot(real_price, color='red', label='实际股票价格走势', marker='o', markerfacecolor='red')  # 红线表示真实股价
-        plt.plot(predict_price, color='blue', label='预测股票价格走势', marker='o', markerfacecolor='blue')  # 蓝线表示预测股价
+
+        plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文
+        plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+        plt.plot(real_price, color='red', label='实际股票价格走势', marker='o', markerfacecolor='red')          # 红线表示真实股价
+        plt.plot(predict_price, color='blue', label='预测股票价格走势', marker='o', markerfacecolor='blue')     # 蓝线表示预测股价
         plt.title(self.now_predict_file + ' 股票走势预测')
         plt.xlabel('时间(天)')
         plt.ylabel('开盘单股价格(美元)')
-        plt.legend()
+        plt.legend(loc='upper right')
+
         if if_generate_pic:
             plt.savefig(self.PIC_PATH + self.now_model_name + '+' + self.now_predict_file + '.png')
             plt.clf()
         else:
             plt.show()
+            plt.clf()
 
     def analysis(self, real_price_set, predict_price_set):
         accuracy = 0.0
 
-Timestep = 64
-DATA_PATH = 'dataset_origin/'
-MODEL_PATH = 'trained_models/'
-PIC_PATH = 'predict_pic/'
-myModel = My_LSTM_Training(Timestep, DATA_PATH, MODEL_PATH, PIC_PATH)
-X_train, y_train = myModel.init_dataset('train_set.csv')
+# Timestep = 64
+# DATA_PATH = 'dataset_origin/'
+# MODEL_PATH = 'trained_models/'
+# PIC_PATH = 'predict_pic/'
+# myModel = My_LSTM_Training(Timestep, DATA_PATH, MODEL_PATH, PIC_PATH)
+# X_train, y_train = myModel.init_dataset('train_set.csv')
 # # myModel.modelTrain(X_train, y_train, batch_size=128, name='train_set_test.h5')
 # # 开始训练模型
 # real_stock_price, predicted_stock_price = myModel.model_predict('train_set_test.h5', 'JD.csv', Timestep, 50)
